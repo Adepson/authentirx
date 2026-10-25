@@ -86,6 +86,11 @@ class H(BaseHTTPRequestHandler):
                 self._send(200, pathlib.Path("logo.svg").read_bytes(), "image/svg+xml")
             except Exception:
                 self._send(404, b"not found")
+        elif self.path.startswith("/logo.png"):
+            try:
+                self._send(200, pathlib.Path("logo.png").read_bytes(), "image/jpeg")
+            except Exception:
+                self._send(404, b"not found")
         else:
             page = pathlib.Path("app.html").read_bytes()
             self._send(200, page, "text/html; charset=utf-8")
