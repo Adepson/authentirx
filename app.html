@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AuthentiRx - Know your medicine</title>
+<style>
+  :root { --ink:#0e2233; --accent:#0a7d5a; --warn:#b3541e; --bad:#a3232f; }
+  * { box-sizing:border-box; margin:0; font-family:-apple-system,system-ui,sans-serif; }
+  body { background:#f2f5f4; color:var(--ink); padding:16px; max-width:520px; margin:0 auto; }
+  h1 { font-size:1.5rem; margin:18px 0 4px; }
+  p.sub { color:#5a6b76; font-size:.92rem; margin-bottom:18px; }
+  form { display:flex; gap:8px; }
+  input { flex:1; padding:14px; font-size:1rem; border:1px solid #cfd8d4; border-radius:10px; }
+  button { padding:14px 18px; font-size:1rem; background:var(--accent); color:#fff; border:0; border-radius:10px; }
+  section { background:#fff; border:1px solid #e2e8e5; border-radius:12px; padding:14px; margin-top:12px; }
+  h2 { font-size:.95rem; text-transform:uppercase; letter-spacing:.04em; color:#5a6b76; margin-bottom:8px; }
+  .match { font-size:1.2rem; font-weight:600; }
+  .pill { display:inline-block; font-size:.8rem; padding:3px 10px; border-radius:99px; margin:4px 4px 0 0; }
+  .pill.bad { background:#fbe9ea; color:var(--bad); }
+  .pill.warn { background:#fdf0e7; color:var(--warn); }
+  .pill.ok { background:#e6f4ee; color:var(--accent); }
+  li { margin:8px 0; font-size:.9rem; line-height:1.4; }
+  a { color:var(--accent); }
+  .disc { margin-top:18px; font-size:.75rem; color:#8a979e; text-align:center; }
+</style>
+</head>
+<body>
+<h1>AuthentiRx</h1>
+<p class="sub">Know your medicine before you take it. Type the name printed on the pack.</p>
+<form id="f"><input id="q" placeholder="e.g. paracetmol, augmentin, insulin" autocomplete="off"><button>Check</button></form>
+<div id="out"></div>
+<h1 style="font-size:1.1rem;margin-top:26px">Check interactions between medicines</h1>
+<p class="sub">Enter two or more names separated by commas. This checks FDA label text only. It is not a clinical interaction checker.</p>
+<form id="fi"><input id="qi" placeholder="e.g. warfarin, aspirin" autocomplete="off"><button>Compare</button></form>
+<div id="iout"></div>
+<p class="disc">Informational only, not medical advice. Data: NIH RxNorm, openFDA, NAFDAC public alerts. Always confirm with your doctor or pharmacist.</p>
+<script>
+document.getElementById('f').onsubmit = async (e) => {
+  e.preventDefault();
+  const out = document.getElementById('out');
+  out.innerHTML = '<section>Checking…</section>';
+  try {
+    const r = await (await fetch('/api/check?name=' + encodeURIComponent(document.getElementById('q').value))).json();
+    if (r.error) { out.innerHTML = '<section>' + r.error + '</section>'; return; }
+    let h = '<section><h2>Medicine identified</h2><div class="match">' + r.drug.name + '</div>' +
+            '<span class="pill ok">Matched your typing: "' + r.drug.typed + '"</span></section>';
+    if (r.nafdac_alerts && r.nafdac_alerts.length)
+      h += '<section><h2>NAFDAC safety alerts (official notices)</h2><ul>' +
+        r.nafdac_alerts.map(a => '<li><a href="' + a.url + '" target="_blank">' + a.title + '</a><br><small>' + (a.year||'') + '</small></li>').join('') + '</ul></section>';
+    if (r.fda_recalls && r.fda_recalls.length)
+      h += '<section><h2>FDA recall records</h2><ul>' +
+        r.fda_recalls.map(a => '<li><span class="pill ' + (/Class I/.test(a.classification||'')?'bad':'warn') + '">' + (a.classification||'') + ' ' + (a.status||'') + '</span><br>' + (a.product||'') + '<br><small>Reason: ' + (a.reason||'') + ' (' + (a.date||'') + ')</small></li>').join('') + '</ul></section>';
+    else
+      h += '<section><h2>FDA recall records</h2><span class="pill ok">No FDA recall records found</span></section>';
+    if (r.fda_label && r.fda_label.warnings)
+      h += '<section><h2>Official label warning</h2><p style="font-size:.9rem">' + r.fda_label.warnings + '</p></section>';
+    out.innerHTML = h;
+    h += '<section id="usage"><h2>How it is used (FDA label)</h2><div id="ulabel"><small>Loading label...</small></div></section>';
+    h += '<section id="events"><h2>Reported adverse events (FDA FAERS)</h2><div id="uevents"><small>Loading reports...</small></div></section>';
+    out.innerHTML = h;
+    loadLabel(document.getElementById('q').value);
+    loadEvents(document.getElementById('q').value);
+  } catch (err) { out.innerHTML = '<section>Something went wrong. Try again.</section>'; }
+};
+
+const SEC = [['indications','Used for'],['dosage','Dosage'],['boxed_warning','Boxed warning'],['contraindications','Do not use if'],['warnings','Warnings'],['adverse_reactions','Possible side effects']];
+const esc = s => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function loadLabel(name) {
+  const el = document.getElementById('ulabel');
+  try {
+    const r = await (await fetch('/api/label?name=' + encodeURIComponent(name))).json();
+    if (r.error) { el.innerHTML = '<small>' + esc(r.error) + '</small>'; return; }
+    if (!r.found) { el.innerHTML = '<small>' + esc(r.error) + '</small>'; return; }
+    let h = '<small>' + esc(r.brand) + (r.generic ? ' (' + esc(r.generic) + ')' : '') + '</small>';
+    SEC.forEach(([k, t]) => {
+      if (r.sections[k]) h += '<p style="font-size:.9rem;margin-top:8px"><b>' + t + ':</b> ' + esc(r.sections[k]) + '</p>';
+    });
+    const miss = SEC.filter(([k]) => !r.sections[k]).map(([,t]) => t);
+    if (miss.length) h += '<small>Not listed in this label: ' + miss.join(', ') + '.</small>';
+    h += '<br><small>' + esc(r.note) + ' Source: ' + esc(r.source) + '.</small>';
+    el.innerHTML = h;
+  } catch (err) { el.innerHTML = '<small>Could not load the label. Try again.</small>'; }
+}
+
+async function loadEvents(name) {
+  const el = document.getElementById('uevents');
+  try {
+    const r = await (await fetch('/api/events?name=' + encodeURIComponent(name))).json();
+    if (r.error) { el.innerHTML = '<small>' + esc(r.error) + '</small>'; return; }
+    if (!r.found) { el.innerHTML = '<small>' + esc(r.error) + '</small>'; return; }
+    const f = n => Number(n).toLocaleString('en-US');
+    const o = r.serious_outcomes;
+    let h = '<p style="font-size:.9rem"><b>Total reports:</b> ' + f(r.total_reports) + '<br>' +
+      '<b>Serious outcome reports:</b> ' + f(r.serious_reports) + ' (' + r.serious_share_pct + '% of total)<br>' +
+      '<small>Deaths: ' + f(o.death) + ' | Hospitalizations: ' + f(o.hospitalization) + ' | Life-threatening: ' + f(o.life_threatening) + ' | Disability: ' + f(o.disability) + '</small></p>';
+    h += '<p style="font-size:.9rem;margin-top:8px"><b>Most reported reactions</b> (' + esc(r.top_reactions_basis) + '):</p><ol style="font-size:.9rem">' +
+      r.top_reactions.map(t => '<li>' + esc(t.term) + ' (' + f(t.count) + ')</li>').join('') + '</ol>';
+    h += '<p style="font-size:.85rem;background:#fdf0e7;color:#b3541e;padding:8px;border-radius:8px"><b>Unverified reports, not proof of causation.</b> ' +
+      'FAERS collects reports sent to FDA. Anyone can report, and a report does not prove the drug caused the event. ' +
+      'Counts depend on how widely a drug is used, so a high count does not by itself mean a drug is more dangerous.</p>';
+    h += '<small>' + esc(r.source) + '.</small>';
+    el.innerHTML = h;
+  } catch (err) { el.innerHTML = '<small>Could not load adverse event reports. Try again.</small>'; }
+}
+
+document.getElementById('fi').onsubmit = async (e) => {
+  e.preventDefault();
+  const out = document.getElementById('iout');
+  out.innerHTML = '<section>Checking labels...</section>';
+  try {
+    const r = await (await fetch('/api/interactions?names=' + encodeURIComponent(document.getElementById('qi').value))).json();
+    if (r.error) { out.innerHTML = '<section>' + esc(r.error) + '</section>'; return; }
+    let h = '<section><h2>Label-based check</h2><small>' + esc(r.disclaimer) + '</small>';
+    if (r.errors && r.errors.length) h += '<ul>' + r.errors.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
+    if (r.flags && r.flags.length)
+      h += '<ul>' + r.flags.map(f => '<li><span class="pill warn">Flag</span><br>' + esc(f.message) + '<br><small>' + esc(f.source) + '</small></li>').join('') + '</ul>';
+    else h += '<p style="font-size:.9rem;margin-top:8px">No flags found in the label text. This does not mean there is no interaction.</p>';
+    h += '</section>';
+    out.innerHTML = h;
+  } catch (err) { out.innerHTML = '<section>Something went wrong. Try again.</section>'; }
+};
+</script>
+</body>
+</html>
