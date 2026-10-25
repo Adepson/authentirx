@@ -89,4 +89,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    HTTPServer(("127.0.0.1", 8734), H).serve_forever()
+    import os
+    HTTPServer(("0.0.0.0", int(os.environ.get("PORT", 8734))), H).serve_forever()
